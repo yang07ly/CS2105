@@ -47,20 +47,19 @@ class FileReceiver {
 			// rdt2.0 packet corruption
 			pkt = rdt2_0(pkt);
 			String dest = extractDest(pkt);
-
-
-			/*
+			
 			BufferedOutputStream bos = new BufferedOutputStream(new FileOutputStream(dest));
-
 			while (pkt.getLength()!=0) {
 				pkt = new DatagramPacket(buffer, buffer.length);
 				socket.receive(pkt);
-				bos.write(buffer, 0, pkt.getLength());
-				sum += pkt.getLength();
+				if (pkt.getLength()==0) break;
+				pkt = trimPktData(pkt);
+				pkt = rdt2_0(pkt);
+				byte[] data = Arrays.copyOfRange(pkt.getData(), 4, pkt.getLength());
+				bos.write(data, 0, data.length);
 			}
-
 			bos.close();
-			 */
+			 
 			socket.close();
 		} catch (IOException e1) {
 			e1.printStackTrace();
@@ -81,6 +80,7 @@ class FileReceiver {
 				DatagramPacket replyPkt = new DatagramPacket(replyData, replyData.length, clientAddress, packet.getPort());
 				socket.send(replyPkt);
 				if (reply.equals("NAK")) socket.receive(packet);
+				System.out.println("[DEBUG] packet size: " + packet.getLength());
 			} while (reply.equals("NAK"));
 		} catch (IOException e) {
 			e.printStackTrace();
@@ -91,10 +91,8 @@ class FileReceiver {
 	public boolean isCorruptedPkt(byte[] bytes) {
 		int senderChecksum = extractChecksum(bytes);
 		byte[] contents = Arrays.copyOfRange(bytes, 4, bytes.length);
-		String header = new String(contents, 0, contents.length);
-		System.out.println("[DEBUG] length of contents: " + contents.length);
-		System.out.println("[DEBUG] header: " + header);
 		int contentChecksum = calculateChecksum(contents);
+		System.out.println("[DEBUG] senderChecksum: " + senderChecksum);
 		System.out.println("[DEBUG] contentChecksum: " + contentChecksum);
 		if (senderChecksum==contentChecksum) return false;
 		else return true;
@@ -135,4 +133,5 @@ class FileReceiver {
 		pkt.setData(arr2);
 		return pkt;
 	}
+
 }

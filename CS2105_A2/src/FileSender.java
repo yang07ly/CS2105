@@ -1,6 +1,7 @@
 import java.io.*;
 import java.net.*;
 import java.nio.ByteBuffer;
+import java.util.Arrays;
 import java.util.zip.CRC32;
 
 public class FileSender {
@@ -29,46 +30,55 @@ public class FileSender {
 
 	public void process(String fileToOpen, String host, String portString, String rcvFileName) {
 		try {
-			BufferedInputStream bis = new BufferedInputStream(new FileInputStream(fileToOpen));
-			byte[] buffer = new byte[1000];
-			int buffersize = 0;
-
 			InetAddress serverAddress = InetAddress.getByName(host);
 			port = Integer.parseInt(portString);
-
-			// header packet containing new filename;
-			// rdt2.0
+			
+			//Header Packet contains dest filename
 			String header = serverAddress.toString() + rcvFileName;
-			System.out.println("[DEBUG] header: " + header);
 			byte[] headerData = header.getBytes();
-			System.out.println("[DEBUG] length of headerData: " + headerData.length);
-			int checksum = calculateChecksum(headerData);
-			System.out.println("[DEBUG] checksum: " + checksum);
-			byte[] pktBytes = combineBytes(convertInttoBytes(checksum), headerData);
-			DatagramPacket headerPkt = new DatagramPacket(pktBytes, pktBytes.length, serverAddress, port);
+			headerData = addChecksum(headerData);
+			DatagramPacket headerPkt = new DatagramPacket(headerData, headerData.length, serverAddress, port);
 			clientSocket.send(headerPkt);
-
-			// receiving NAK/ACK from receiver
-			// NAK: resend
 			rdt2_0(headerPkt);
-
-
-			/*while ((buffersize=bis.read(buffer))>0) {
-				DatagramPacket packet = new DatagramPacket(buffer, buffersize, serverAddress, portNumber);
+			
+			BufferedInputStream bis = new BufferedInputStream(new FileInputStream(fileToOpen));
+			byte[] buffer = new byte[996];
+			int buffersize = 0;
+			int sum =0;
+			while ((buffersize=bis.read(buffer, 0, 996))>0) {
+				sum += buffersize;
+				byte[] pktData = trimData(buffer, buffersize);
+				pktData = addChecksum(pktData);
+				DatagramPacket packet = new DatagramPacket(pktData, buffersize+4, serverAddress, port);
 				clientSocket.send(packet);
-				Thread.sleep(1);
+				rdt2_0(packet);
 			}
+			System.out.println("[DEBUG] file size: " + sum);
+			bis.close();
 
 			// create empty packet
 			buffer = new byte[0];
-			DatagramPacket emptyPkt = new DatagramPacket(buffer, buffer.length, serverAddress, portNumber);
-			clientSocket.send(emptyPkt);*/
-
+			DatagramPacket emptyPkt = new DatagramPacket(buffer, buffer.length, serverAddress, port);
+			clientSocket.send(emptyPkt);
+			
 			clientSocket.close();
-			bis.close();
 		} catch (Exception e) {
 			e.printStackTrace();
 		}
+	}
+	
+	private byte[] trimData(byte[] bytes, int size) {
+		byte[] arr = new byte[size];
+		arr = Arrays.copyOfRange(bytes, 0, size);
+		return arr;
+	}
+	
+	public byte[] addChecksum(byte[] bytes) {
+		int checksum = calculateChecksum(bytes);
+		System.out.println("[DEBUG] checksum: " + checksum);
+		byte[] checksumBytes = ByteBuffer.allocate(4).putInt(checksum).array();
+		byte[] pktData = combineBytes(checksumBytes, bytes);
+		return pktData;
 	}
 
 	public void rdt2_0(DatagramPacket pkt) {
@@ -81,10 +91,7 @@ public class FileSender {
 				clientSocket.receive(receivedPkt);
 				reply = new String(receivedPkt.getData(), 0, receivedPkt.getLength());
 				System.out.println("[DEBUG] reply: " + reply);
-
-				if (reply.equals("NAK")) {
-					clientSocket.send(pkt);
-				}
+				if (reply.equals("NAK")) clientSocket.send(pkt);
 			} while (reply.equals("NAK"));
 		} catch (IOException e){
 			e.printStackTrace();
@@ -97,13 +104,10 @@ public class FileSender {
 		return (int) crc.getValue();
 	}
 
-	public byte[] convertInttoBytes(int integer) {
-		byte[] checksumBytes = ByteBuffer.allocate(4).putInt(integer).array();
-		return checksumBytes;
-	}
-
 	public byte[] combineBytes(byte[] arr1, byte[] arr2) {
 		byte[] combined = new byte[arr1.length + arr2.length];
+		System.out.println("[DEBUG] size of arr1: " + arr1.length);
+		System.out.println("[DEBUG] size of arr2: " + arr2.length);
 
 		System.arraycopy(arr1, 0, combined, 0, arr1.length);
 		System.arraycopy(arr2, 0, combined, arr1.length, arr2.length);
