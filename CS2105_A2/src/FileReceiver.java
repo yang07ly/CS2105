@@ -41,6 +41,8 @@ class FileReceiver {
 		try {
 			DatagramPacket pkt = new DatagramPacket(buffer, buffer.length);
 			socket.receive(pkt);
+			pkt = trimPktData(pkt);
+
 
 			// rdt2.0 packet corruption
 			pkt = rdt2_0(pkt);
@@ -69,6 +71,7 @@ class FileReceiver {
 		InetAddress clientAddress = packet.getAddress();
 		String reply = "";
 		try {
+			do {
 				if (!isCorruptedPkt(packet.getData())) {
 					reply = "ACK";
 				}
@@ -78,6 +81,7 @@ class FileReceiver {
 				DatagramPacket replyPkt = new DatagramPacket(replyData, replyData.length, clientAddress, packet.getPort());
 				socket.send(replyPkt);
 				if (reply.equals("NAK")) socket.receive(packet);
+			} while (reply.equals("NAK"));
 		} catch (IOException e) {
 			e.printStackTrace();
 		}
@@ -86,8 +90,10 @@ class FileReceiver {
 
 	public boolean isCorruptedPkt(byte[] bytes) {
 		int senderChecksum = extractChecksum(bytes);
-		System.out.println("[DEBUG] senderChecksum: " + senderChecksum);
 		byte[] contents = Arrays.copyOfRange(bytes, 4, bytes.length);
+		String header = new String(contents, 0, contents.length);
+		System.out.println("[DEBUG] length of contents: " + contents.length);
+		System.out.println("[DEBUG] header: " + header);
 		int contentChecksum = calculateChecksum(contents);
 		System.out.println("[DEBUG] contentChecksum: " + contentChecksum);
 		if (senderChecksum==contentChecksum) return false;
@@ -119,5 +125,14 @@ class FileReceiver {
 		String dest = extractDestFileName(header);
 		System.out.println("[DEBUG] dest: " + dest);
 		return dest;
+	}
+
+	private DatagramPacket trimPktData(DatagramPacket pkt) {
+		int size = pkt.getLength();
+		byte[] arr1 = pkt.getData();
+		byte[] arr2 = new byte[size];
+		arr2 = Arrays.copyOfRange(arr1, 0, size);
+		pkt.setData(arr2);
+		return pkt;
 	}
 }

@@ -39,7 +39,9 @@ public class FileSender {
 			// header packet containing new filename;
 			// rdt2.0
 			String header = serverAddress.toString() + rcvFileName;
+			System.out.println("[DEBUG] header: " + header);
 			byte[] headerData = header.getBytes();
+			System.out.println("[DEBUG] length of headerData: " + headerData.length);
 			int checksum = calculateChecksum(headerData);
 			System.out.println("[DEBUG] checksum: " + checksum);
 			byte[] pktBytes = combineBytes(convertInttoBytes(checksum), headerData);
@@ -74,15 +76,17 @@ public class FileSender {
 			String reply = "";
 			byte[] buffer = new byte[1000];
 			DatagramPacket receivedPkt = new DatagramPacket(buffer, buffer.length);
-			clientSocket.receive(receivedPkt);
+			
+			do {
+				clientSocket.receive(receivedPkt);
+				reply = new String(receivedPkt.getData(), 0, receivedPkt.getLength());
+				System.out.println("[DEBUG] reply: " + reply);
 
-			reply = new String(receivedPkt.getData(), 0, receivedPkt.getLength());
-			System.out.println("[DEBUG] reply: " + reply);
-
-			if (reply.equals("NAK")) {
-				clientSocket.send(pkt);
-			}
-		}catch (IOException e){
+				if (reply.equals("NAK")) {
+					clientSocket.send(pkt);
+				}
+			} while (reply.equals("NAK"));
+		} catch (IOException e){
 			e.printStackTrace();
 		}
 	}
