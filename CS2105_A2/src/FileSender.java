@@ -36,7 +36,7 @@ public class FileSender {
 			InetAddress serverAddress = InetAddress.getByName(host);
 			port = Integer.parseInt(portString);
 
-			// header packet
+			// header packet containing new filename;
 			// rdt2.0
 			String header = serverAddress.toString() + rcvFileName;
 			byte[] headerData = header.getBytes();
@@ -46,6 +46,8 @@ public class FileSender {
 			DatagramPacket headerPkt = new DatagramPacket(pktBytes, pktBytes.length, serverAddress, port);
 			clientSocket.send(headerPkt);
 
+			// receiving NAK/ACK from receiver
+			// NAK: resend
 			rdt2_0(headerPkt);
 
 
@@ -72,14 +74,14 @@ public class FileSender {
 			String reply = "";
 			byte[] buffer = new byte[1000];
 			DatagramPacket receivedPkt = new DatagramPacket(buffer, buffer.length);
-				clientSocket.receive(receivedPkt);
+			clientSocket.receive(receivedPkt);
 
-				reply = new String(receivedPkt.getData(), 0, receivedPkt.getLength());
-				System.out.println("[DEBUG] reply: " + reply);
+			reply = new String(receivedPkt.getData(), 0, receivedPkt.getLength());
+			System.out.println("[DEBUG] reply: " + reply);
 
-				if (reply.equals("NAK")) {
-					clientSocket.send(pkt);
-				}
+			if (reply.equals("NAK")) {
+				clientSocket.send(pkt);
+			}
 		}catch (IOException e){
 			e.printStackTrace();
 		}
