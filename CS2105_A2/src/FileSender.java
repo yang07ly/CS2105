@@ -53,7 +53,7 @@ public class FileSender {
 				clientSocket.send(packet);
 				rdt2_0(packet);
 			}
-			System.out.println("[DEBUG] file size: " + sum);
+			System.out.println("[DEBUG] size of file sent: " + sum);
 			bis.close();
 
 			// create empty packet
@@ -106,9 +106,6 @@ public class FileSender {
 
 	public byte[] combineBytes(byte[] arr1, byte[] arr2) {
 		byte[] combined = new byte[arr1.length + arr2.length];
-		System.out.println("[DEBUG] size of arr1: " + arr1.length);
-		System.out.println("[DEBUG] size of arr2: " + arr2.length);
-
 		System.arraycopy(arr1, 0, combined, 0, arr1.length);
 		System.arraycopy(arr2, 0, combined, arr1.length, arr2.length);
 		return combined;

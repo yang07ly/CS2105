@@ -80,7 +80,6 @@ class FileReceiver {
 				DatagramPacket replyPkt = new DatagramPacket(replyData, replyData.length, clientAddress, packet.getPort());
 				socket.send(replyPkt);
 				if (reply.equals("NAK")) socket.receive(packet);
-				System.out.println("[DEBUG] packet size: " + packet.getLength());
 			} while (reply.equals("NAK"));
 		} catch (IOException e) {
 			e.printStackTrace();
