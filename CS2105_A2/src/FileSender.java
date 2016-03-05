@@ -5,6 +5,9 @@ import java.util.Arrays;
 import java.util.zip.CRC32;
 
 public class FileSender {
+	private static final int NAK = -1926652028;
+	private static final int ACK = -1270629829;
+	
 	DatagramSocket clientSocket;
 	int port;
 
@@ -36,6 +39,7 @@ public class FileSender {
 			//Header Packet contains dest filename
 			String header = serverAddress.toString() + rcvFileName;
 			byte[] headerData = header.getBytes();
+			headerData = addPktNumber(headerData, 0);
 			headerData = addChecksum(headerData);
 			DatagramPacket headerPkt = new DatagramPacket(headerData, headerData.length, serverAddress, port);
 			clientSocket.send(headerPkt);
@@ -73,6 +77,12 @@ public class FileSender {
 		return arr;
 	}
 	
+	private byte[] addPktNumber(byte[] bytes, int number) {
+		byte[] numberBytes = ByteBuffer.allocate(4).putInt(number).array();
+		byte[] pktData = combineBytes(numberBytes, bytes);
+		return pktData;
+	}
+	
 	public byte[] addChecksum(byte[] bytes) {
 		int checksum = calculateChecksum(bytes);
 		System.out.println("[DEBUG] checksum: " + checksum);
@@ -86,13 +96,27 @@ public class FileSender {
 			String reply = "";
 			byte[] buffer = new byte[1000];
 			DatagramPacket receivedPkt = new DatagramPacket(buffer, buffer.length);
+			boolean resend = false;
 			
 			do {
 				clientSocket.receive(receivedPkt);
+				receivedPkt = trimPktData(receivedPkt);
 				reply = new String(receivedPkt.getData(), 0, receivedPkt.getLength());
 				System.out.println("[DEBUG] reply: " + reply);
-				if (reply.equals("NAK")) clientSocket.send(pkt);
-			} while (reply.equals("NAK"));
+				
+				int replyChecksum = calculateChecksum(receivedPkt.getData());
+				System.out.println("[DEBUG] replyChecksum: " + replyChecksum);
+				if (replyChecksum!=NAK && replyChecksum!=ACK) {
+					System.out.println("Corrupted reply message.");
+					clientSocket.send(pkt);
+					resend=true;
+				}
+				else if (reply.equals("NAK")) {
+					resend = true;
+					clientSocket.send(pkt);
+				}
+				else resend = false;
+			} while (resend);
 		} catch (IOException e){
 			e.printStackTrace();
 		}
@@ -109,5 +133,14 @@ public class FileSender {
 		System.arraycopy(arr1, 0, combined, 0, arr1.length);
 		System.arraycopy(arr2, 0, combined, arr1.length, arr2.length);
 		return combined;
+	}
+	
+	private DatagramPacket trimPktData(DatagramPacket pkt) {
+		int size = pkt.getLength();
+		byte[] arr1 = pkt.getData();
+		byte[] arr2 = new byte[size];
+		arr2 = Arrays.copyOfRange(arr1, 0, size);
+		pkt.setData(arr2);
+		return pkt;
 	}
 }
