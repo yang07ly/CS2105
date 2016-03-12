@@ -36,7 +36,6 @@ public class FileSender {
 			InetAddress serverAddress = InetAddress.getByName(host);
 			port = Integer.parseInt(portString);
 			
-			//testing
 			//Header Packet contains dest filename
 			String header = serverAddress.toString() + rcvFileName;
 			byte[] headerData = header.getBytes();
