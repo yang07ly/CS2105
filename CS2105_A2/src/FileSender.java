@@ -30,7 +30,7 @@ public class FileSender {
 					+ "<rcvHostName> <rcvPort> <rcvFileName>");
 			System.exit(1);
 		}
-		
+
 		FileSender fileSender = new FileSender();
 		double time1 = System.currentTimeMillis() / 1000.0;
 		fileSender.process(args[0], args[1], args[2], args[3]);
@@ -75,10 +75,24 @@ public class FileSender {
 			DatagramPacket emptyPkt = new DatagramPacket(buffer, buffer.length, serverAddress, port);
 			clientSocket.send(emptyPkt);
 
+			DatagramPacket terminatePkt = new DatagramPacket(buffer, buffer.length);
+			clientSocket.setSoTimeout(1);
+
+			while (true) {
+				try {
+					clientSocket.receive(terminatePkt);
+					String receiverReply = new String(terminatePkt.getData(), 0, terminatePkt.getLength());
+					if (!receiverReply.contains("ACK")) break;
+				}
+				catch (SocketTimeoutException e) {
+				}
+				clientSocket.send(emptyPkt);
+			}
 			bis.close();
 			clientSocket.close();
+			System.out.println("===============TRANSMISSION COMPLETE===============");
 
-		} catch (Exception e) {
+		} catch (IOException e) {
 			e.printStackTrace();
 		}
 	}
@@ -99,7 +113,7 @@ public class FileSender {
 				// If sequence number matches, ACK. Else, NAK.
 				// And why no checksum of the ack data attached?
 				String expectedReply = "ACK" + sequence;
-				
+
 				if (receiverReply.equals(expectedReply)) {
 					System.out.println("Packet" + sequence + " transmitted successfully");
 					break;
@@ -110,11 +124,11 @@ public class FileSender {
 			} catch (SocketTimeoutException e) {
 				System.out.println("TIMEOUT for reply of packet " + sequence);
 				// Resend pkt here  (ACK timeout scenario)
-				clientSocket.send(pkt);
+
 			}
 			// resend packet if timeout/corruption
 			// This statement is unnecessary. Resending scenarios already accounted for above. This becomes necessary resending.
-			
+			clientSocket.send(pkt);
 		}
 		return "Packet" + sequence + " sent";
 	}

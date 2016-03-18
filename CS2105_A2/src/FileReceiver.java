@@ -55,8 +55,13 @@ class FileReceiver {
 			BufferedOutputStream bos = new BufferedOutputStream(new FileOutputStream(dest));
 			double sum = 0;
 
-			while (pkt.getLength()!=0) {
+			while (true) {
 				socket.receive(pkt);
+				if (pkt.getLength()==0) {
+					bos.close();
+					terminate(pkt);
+					break;
+				}
 				byte[] data = rdt(pkt);
 				int current = extractPktNumber(data);
 				if (current<sequence) {
@@ -74,7 +79,6 @@ class FileReceiver {
 				bos.write(data, 0, data.length);
 				sum += data.length;
 				System.out.println("---------" + data.length + " bytes received. Sum is " + sum/1000 + "KB ---------");
-				if (data.length<992) break;
 				sequence++;
 			}
 
@@ -118,6 +122,15 @@ class FileReceiver {
 			e.printStackTrace();
 		}
 		return data;
+	}
+	
+	private void terminate(DatagramPacket pkt) throws IOException {
+		do  {
+			byte[] terminateData = "TERMINATE".getBytes();
+			DatagramPacket terminatePkt = new DatagramPacket(terminateData, terminateData.length, pkt.getAddress(), pkt.getPort());
+			socket.send(terminatePkt);
+			socket.receive(pkt);
+		} while ((pkt.getLength()!=0));
 	}
 
 	private boolean isCorrupted(byte[] bytes) {
