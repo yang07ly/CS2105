@@ -7,11 +7,12 @@ import java.util.zip.CRC32;
 public class FileSender {
 	private static final int NAK = -1926652028;
 	private static final int ACK = -1270629829;
+	private static final int N = 4;
 
-	DatagramSocket clientSocket;
-	int port;
-	int ACK1;
-	int sequence;
+	private DatagramSocket clientSocket;
+	private int port;
+	private int ACK1;
+	private int sequence;
 
 	public FileSender() {
 		try {
@@ -43,6 +44,7 @@ public class FileSender {
 			port = Integer.parseInt(portString);
 
 			//Header Packet contains dest filename
+			//Why need to attach inetaddress of localhost?
 			String header = serverAddress.toString() + rcvFileName;
 			byte[] headerData = header.getBytes();
 			headerData = addPktNumber(headerData, sequence);
@@ -55,11 +57,11 @@ public class FileSender {
 			BufferedInputStream bis = new BufferedInputStream(new FileInputStream(fileToOpen));
 			byte[] buffer = new byte[992];
 			int buffersize=0;
+			int repeat=0;
 			while ((buffersize=bis.read(buffer))>0) {
 				// trim packet for last packet
 				byte[] pktData = new byte[buffersize];
 				pktData = Arrays.copyOfRange(buffer, 0, buffersize);
-
 				pktData = addPktNumber(pktData, sequence);
 				pktData = addChecksum(pktData);
 				DatagramPacket pkt = new DatagramPacket(pktData, pktData.length, serverAddress, port);
@@ -82,14 +84,20 @@ public class FileSender {
 	}
 
 	private String rdt(DatagramPacket pkt) throws IOException {
+		// Why need 1000 bytes packet?
+		// Not sure if it affects speed, but try to make the ack packet fit to the actual size used
 		byte[] buffer = new byte[1000];
 		DatagramPacket receivedPkt = new DatagramPacket(buffer, buffer.length);
 		clientSocket.setSoTimeout(1);
 
 		while (true) {
 			try {
+				// I set the socket timeout here instead
 				clientSocket.receive(receivedPkt);
 				String receiverReply = new String(receivedPkt.getData(), 0, receivedPkt.getLength());
+				// The string ACK is unnecessary, just do a matching of sequence number
+				// If sequence number matches, ACK. Else, NAK.
+				// And why no checksum of the ack data attached?
 				String expectedReply = "ACK" + sequence;
 				
 				if (receiverReply.equals(expectedReply)) {
@@ -97,13 +105,16 @@ public class FileSender {
 					break;
 				}
 				System.out.println("Packet" + sequence + " corrupted.");
-				clientSocket.send(pkt);
+				clientSocket.send(pkt);   // (Corrupted ACK scenario)
 				continue;	
 			} catch (SocketTimeoutException e) {
 				System.out.println("TIMEOUT for reply of packet " + sequence);
+				// Resend pkt here  (ACK timeout scenario)
+				clientSocket.send(pkt);
 			}
 			// resend packet if timeout/corruption
-			clientSocket.send(pkt);
+			// This statement is unnecessary. Resending scenarios already accounted for above. This becomes necessary resending.
+			
 		}
 		return "Packet" + sequence + " sent";
 	}

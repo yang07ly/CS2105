@@ -69,6 +69,7 @@ class FileReceiver {
 					System.out.println("BOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOM");
 					break;
 				}
+				reply(sequence, pkt.getAddress(), pkt.getLength());
 				data = Arrays.copyOfRange(data, 8, data.length);
 				bos.write(data, 0, data.length);
 				sum += data.length;
@@ -108,6 +109,10 @@ class FileReceiver {
 				socket.receive(pkt);
 				data = trimPktData(pkt);
 			}
+			// what if received packet is already not corrupted at the start? No need to send ack packet to sender?
+			// I don't think you accounted for sending ack packets when isCorrupted becomes false too.
+			// Try tracing this loop and see how it works
+			// I believe you only send NAK
 
 		} catch (Exception e) {
 			e.printStackTrace();
