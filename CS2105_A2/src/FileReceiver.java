@@ -13,6 +13,7 @@ import java.io.*;
 class FileReceiver {
 	public DatagramSocket socket; 
 	int port;
+	int sequence;
 
 	public static void main(String[] args) {
 
@@ -21,13 +22,17 @@ class FileReceiver {
 			System.out.println("Usage: java FileReceiver port");
 			System.exit(1);
 		}
-
+		
+		double time1 = System.currentTimeMillis() / 1000.0;
 		FileReceiver fileReceiver = new FileReceiver(args[0]);
 		fileReceiver.process();
+		double time2 = System.currentTimeMillis() / 1000.0;
+		System.out.println("Time taken is: " + (time2 - time1));
 	}
 
 	public FileReceiver(String localPort) {
 		port = Integer.parseInt(localPort);
+		sequence=0;
 		try {
 			socket = new DatagramSocket(port);
 		} catch (SocketException e) {
@@ -36,125 +41,129 @@ class FileReceiver {
 	}
 
 	public void process() {
-		byte[] buffer = new byte[1000];
-
+		byte[] buffer = new byte[1000];		
 		try {
-			int pktNumber = 0;
-			
 			DatagramPacket pkt = new DatagramPacket(buffer, buffer.length);
+
 			socket.receive(pkt);
-			pkt = trimPktData(pkt);
-			pkt = rdt2_0(pkt);
-			String dest = extractDest(pkt);
-			double sum =0;
+			byte[] headerData = rdt(pkt); // data is reliable now
+			String dest = extractDest(headerData);
+			System.out.println(dest);
+			reply(sequence, pkt.getAddress(), pkt.getPort());
+			sequence++;
 
 			BufferedOutputStream bos = new BufferedOutputStream(new FileOutputStream(dest));
+			double sum = 0;
+
 			while (pkt.getLength()!=0) {
-				pkt = new DatagramPacket(buffer, buffer.length);
 				socket.receive(pkt);
-				if (pkt.getLength()==0) break;
-				
-				pkt = trimPktData(pkt);
-
-				String reply ="";
-				if (!isCorruptedPkt(pkt.getData())) reply = "ACK";
-				else reply = "NAK";
-				System.out.println("[DEBUG] reply: " + reply);
-				pktNumber = extractPktNumber(pkt.getData());
-				
-				byte[] replyData = reply.getBytes();
-				System.out.println("Checksum of reply: " + calculateChecksum(replyData));
-				DatagramPacket replyPkt = new DatagramPacket(replyData, replyData.length, pkt.getAddress(), pkt.getPort());
-				socket.send(replyPkt);
-
-				if (reply.equals("ACK")) {
-					byte[] data = Arrays.copyOfRange(pkt.getData(), 4, pkt.getLength());
-					bos.write(data, 0, data.length);
-					sum += data.length;
-					System.out.println("-------------------- " + sum + " bytes received.");
+				byte[] data = rdt(pkt);
+				int current = extractPktNumber(data);
+				if (current<sequence) {
+					// sender sends too fast
+					// somehow previous packet also come
+					reply(sequence-1, pkt.getAddress(), pkt.getPort());
+					continue;
 				}
+				if (current>sequence) {
+					System.out.println("BOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOM");
+					break;
+				}
+				reply(sequence, pkt.getAddress(), pkt.getLength());
+				data = Arrays.copyOfRange(data, 8, data.length);
+				bos.write(data, 0, data.length);
+				sum += data.length;
+				System.out.println("---------" + data.length + " bytes received. Sum is " + sum/1000 + "KB ---------");
+				if (data.length<992) break;
+				sequence++;
 			}
+
 			bos.close();
-
 			socket.close();
-		} catch (IOException e1) {
-			e1.printStackTrace();
 		}
-	}
-
-	public DatagramPacket rdt2_0(DatagramPacket packet) {
-		InetAddress clientAddress = packet.getAddress();
-		String reply = "";
-		try {
-			do {
-				if (!isCorruptedPkt(packet.getData())) {
-					reply = "ACK";
-				}
-				else reply = "NAK";
-				System.out.println("[DEBUG] reply: " + reply);
-				byte[] replyData = reply.getBytes();
-				System.out.println("Checksum of reply: " + calculateChecksum(replyData));
-				DatagramPacket replyPkt = new DatagramPacket(replyData, replyData.length, clientAddress, packet.getPort());
-				socket.send(replyPkt);
-			} while (reply.equals("NAK"));
-		} catch (IOException e) {
+		catch (IOException e) {
 			e.printStackTrace();
 		}
-		return packet;
+	}
+	
+	private void reply(int _sequence, InetAddress client, int port) throws IOException {
+		String reply = "ACK" + _sequence;
+		byte[] replyData = reply.getBytes();
+		DatagramPacket replyPkt = new DatagramPacket(replyData, replyData.length, client, port);
+		socket.send(replyPkt);
 	}
 
-	public boolean isCorruptedPkt(byte[] bytes) {
+	// this method gurantees the correctness of the packet returned
+	public byte[] rdt(DatagramPacket pkt) {
+		InetAddress client = pkt.getAddress();
+		byte[] data = trimPktData(pkt);
+		String reply = "";
+		int breakCount=0; //DEBUGGING
+
+		try {
+			while (isCorrupted(data)) {
+				reply = "ACK" + (sequence-1);
+				byte[] replyData = reply.getBytes();
+				DatagramPacket replyPkt = new DatagramPacket(replyData, replyData.length, client, pkt.getPort());
+				socket.send(replyPkt);
+				socket.receive(pkt);
+				data = trimPktData(pkt);
+			}
+			// what if received packet is already not corrupted at the start? No need to send ack packet to sender?
+			// I don't think you accounted for sending ack packets when isCorrupted becomes false too.
+			// Try tracing this loop and see how it works
+			// I believe you only send NAK
+
+		} catch (Exception e) {
+			e.printStackTrace();
+		}
+		return data;
+	}
+
+	private boolean isCorrupted(byte[] bytes) {
 		int senderChecksum = extractChecksum(bytes);
-		byte[] contents = Arrays.copyOfRange(bytes, 8, bytes.length);
+		byte[] contents = Arrays.copyOfRange(bytes, 4, bytes.length);
 		int contentChecksum = calculateChecksum(contents);
-		System.out.println("[DEBUG] senderChecksum: " + senderChecksum);
-		System.out.println("[DEBUG] contentChecksum: " + contentChecksum);
 		if (senderChecksum==contentChecksum) return false;
 		else return true;
 	}
 
-	public int calculateChecksum(byte[] bytes) {
-		CRC32 crc = new CRC32();
-		crc.update(bytes);
-		return (int) crc.getValue();
+	private int extractPktNumber(byte[] bytes) {
+		ByteBuffer wrapper = ByteBuffer.wrap(bytes, 4, 8);
+		return wrapper.getInt();
 	}
 
-	public String extractDestFileName(String string) {
-		String[] strings = string.split("/");
-		String destFileName = strings[1];
-		destFileName = destFileName.substring(9);
-		return destFileName;
-	}
-
-	public int extractChecksum(byte[] bytes) {
+	private int extractChecksum(byte[] bytes) {
 		ByteBuffer wrapper = ByteBuffer.wrap(bytes, 0, 4);
 		return wrapper.getInt();
 	}
-	
-	public int extractPktNumber(byte[] bytes) {
-		byte[] numberData = Arrays.copyOfRange(bytes, 4, 4);
-		ByteBuffer wrapper = ByteBuffer.wrap(numberData, 0, 4);
-		int number = wrapper.getInt();
-		System.out.println("[DEBUG] pkt number: " + number);
-		return number;
+
+	private byte[] trimPktData(DatagramPacket pkt) {
+		int actual = pkt.getLength();
+		byte[] a = pkt.getData();
+		byte[] b = new byte[actual];
+		b = Arrays.copyOfRange(a, 0, actual);
+		return b;
 	}
 
-	public String extractDest(DatagramPacket pkt) {
-		byte[] headerData = Arrays.copyOfRange(pkt.getData(), 4, pkt.getData().length);
+	private int calculateChecksum(byte[] data) {
+		CRC32 crc = new CRC32();
+		crc.update(data);
+		return (int) crc.getValue();
+	}
+
+	private String extractDest(byte[] headerData) {
+		headerData = Arrays.copyOfRange(headerData, 8, headerData.length);
 		String header = new String(headerData, 0, headerData.length);
-		System.out.println("[DEBUG] header: " + header);
 		String dest = extractDestFileName(header);
 		System.out.println("[DEBUG] dest: " + dest);
 		return dest;
 	}
 
-	private DatagramPacket trimPktData(DatagramPacket pkt) {
-		int size = pkt.getLength();
-		byte[] arr1 = pkt.getData();
-		byte[] arr2 = new byte[size];
-		arr2 = Arrays.copyOfRange(arr1, 0, size);
-		pkt.setData(arr2);
-		return pkt;
+	private String extractDestFileName(String string) {
+		String[] strings = string.split("/");
+		String destFileName = strings[1];
+		destFileName = destFileName.substring(9);
+		return destFileName;
 	}
-
 }

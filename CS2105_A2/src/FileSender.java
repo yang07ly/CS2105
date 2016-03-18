@@ -7,13 +7,17 @@ import java.util.zip.CRC32;
 public class FileSender {
 	private static final int NAK = -1926652028;
 	private static final int ACK = -1270629829;
-	
-	DatagramSocket clientSocket;
-	int port;
+	private static final int N = 4;
+
+	private DatagramSocket clientSocket;
+	private int port;
+	private int ACK1;
+	private int sequence;
 
 	public FileSender() {
 		try {
 			clientSocket = new DatagramSocket();
+			sequence=0;
 		} catch (SocketException e) {
 			e.printStackTrace();
 		}
@@ -26,121 +30,127 @@ public class FileSender {
 					+ "<rcvHostName> <rcvPort> <rcvFileName>");
 			System.exit(1);
 		}
-
+		
 		FileSender fileSender = new FileSender();
+		double time1 = System.currentTimeMillis() / 1000.0;
 		fileSender.process(args[0], args[1], args[2], args[3]);
+		double time2 = System.currentTimeMillis() / 1000.0;
+		System.out.println("Time taken is: " + (time2 - time1));
 	}
 
 	public void process(String fileToOpen, String host, String portString, String rcvFileName) {
 		try {
 			InetAddress serverAddress = InetAddress.getByName(host);
 			port = Integer.parseInt(portString);
-			
+
 			//Header Packet contains dest filename
+			//Why need to attach inetaddress of localhost?
 			String header = serverAddress.toString() + rcvFileName;
 			byte[] headerData = header.getBytes();
-			headerData = addPktNumber(headerData, 0);
+			headerData = addPktNumber(headerData, sequence);
 			headerData = addChecksum(headerData);
 			DatagramPacket headerPkt = new DatagramPacket(headerData, headerData.length, serverAddress, port);
 			clientSocket.send(headerPkt);
-			rdt2_0(headerPkt);
-			
-			BufferedInputStream bis = new BufferedInputStream(new FileInputStream(fileToOpen));
-			byte[] buffer = new byte[996];
-			int buffersize = 0;
-			int sum =0;
-			while ((buffersize=bis.read(buffer, 0, 996))>0) {
-				sum += buffersize;
-				byte[] pktData = trimData(buffer, buffersize);
-				pktData = addChecksum(pktData);
-				DatagramPacket packet = new DatagramPacket(pktData, buffersize+4, serverAddress, port);
-				clientSocket.send(packet);
-				rdt2_0(packet);
-			}
-			System.out.println("[DEBUG] size of file sent: " + sum);
-			bis.close();
+			rdt(headerPkt);
+			sequence++;
 
-			// create empty packet
+			BufferedInputStream bis = new BufferedInputStream(new FileInputStream(fileToOpen));
+			byte[] buffer = new byte[992];
+			int buffersize=0;
+			int repeat=0;
+			while ((buffersize=bis.read(buffer))>0) {
+				// trim packet for last packet
+				byte[] pktData = new byte[buffersize];
+				pktData = Arrays.copyOfRange(buffer, 0, buffersize);
+				pktData = addPktNumber(pktData, sequence);
+				pktData = addChecksum(pktData);
+				DatagramPacket pkt = new DatagramPacket(pktData, pktData.length, serverAddress, port);
+				clientSocket.send(pkt);
+				rdt(pkt);
+				sequence++;
+			}
+
+			//send empty packet
 			buffer = new byte[0];
 			DatagramPacket emptyPkt = new DatagramPacket(buffer, buffer.length, serverAddress, port);
 			clientSocket.send(emptyPkt);
-			
+
+			bis.close();
 			clientSocket.close();
+
 		} catch (Exception e) {
 			e.printStackTrace();
 		}
 	}
-	
-	private byte[] trimData(byte[] bytes, int size) {
-		byte[] arr = new byte[size];
-		arr = Arrays.copyOfRange(bytes, 0, size);
-		return arr;
-	}
-	
-	private byte[] addPktNumber(byte[] bytes, int number) {
-		byte[] numberBytes = ByteBuffer.allocate(4).putInt(number).array();
-		byte[] pktData = combineBytes(numberBytes, bytes);
-		return pktData;
-	}
-	
-	public byte[] addChecksum(byte[] bytes) {
-		int checksum = calculateChecksum(bytes);
-		System.out.println("[DEBUG] checksum: " + checksum);
-		byte[] checksumBytes = ByteBuffer.allocate(4).putInt(checksum).array();
-		byte[] pktData = combineBytes(checksumBytes, bytes);
-		return pktData;
-	}
 
-	public void rdt2_0(DatagramPacket pkt) {
-		try {
-			String reply = "";
-			byte[] buffer = new byte[1000];
-			DatagramPacket receivedPkt = new DatagramPacket(buffer, buffer.length);
-			boolean resend = false;
-			
-			do {
+	private String rdt(DatagramPacket pkt) throws IOException {
+		// Why need 1000 bytes packet?
+		// Not sure if it affects speed, but try to make the ack packet fit to the actual size used
+		byte[] buffer = new byte[1000];
+		DatagramPacket receivedPkt = new DatagramPacket(buffer, buffer.length);
+		clientSocket.setSoTimeout(1);
+
+		while (true) {
+			try {
+				// I set the socket timeout here instead
 				clientSocket.receive(receivedPkt);
-				receivedPkt = trimPktData(receivedPkt);
-				reply = new String(receivedPkt.getData(), 0, receivedPkt.getLength());
-				System.out.println("[DEBUG] reply: " + reply);
+				String receiverReply = new String(receivedPkt.getData(), 0, receivedPkt.getLength());
+				// The string ACK is unnecessary, just do a matching of sequence number
+				// If sequence number matches, ACK. Else, NAK.
+				// And why no checksum of the ack data attached?
+				String expectedReply = "ACK" + sequence;
 				
-				int replyChecksum = calculateChecksum(receivedPkt.getData());
-				System.out.println("[DEBUG] replyChecksum: " + replyChecksum);
-				if (replyChecksum!=NAK && replyChecksum!=ACK) {
-					System.out.println("Corrupted reply message.");
-					clientSocket.send(pkt);
-					resend=true;
+				if (receiverReply.equals(expectedReply)) {
+					System.out.println("Packet" + sequence + " transmitted successfully");
+					break;
 				}
-				else if (reply.equals("NAK")) {
-					resend = true;
-					clientSocket.send(pkt);
-				}
-				else resend = false;
-			} while (resend);
-		} catch (IOException e){
-			e.printStackTrace();
+				System.out.println("Packet" + sequence + " corrupted.");
+				clientSocket.send(pkt);   // (Corrupted ACK scenario)
+				continue;	
+			} catch (SocketTimeoutException e) {
+				System.out.println("TIMEOUT for reply of packet " + sequence);
+				// Resend pkt here  (ACK timeout scenario)
+				clientSocket.send(pkt);
+			}
+			// resend packet if timeout/corruption
+			// This statement is unnecessary. Resending scenarios already accounted for above. This becomes necessary resending.
+			
 		}
+		return "Packet" + sequence + " sent";
 	}
 
-	public int calculateChecksum(byte[] bytes) {
+	private byte[] addPktNumber(byte[] data, int num) {
+		byte[] numByte = ByteBuffer.allocate(4).putInt(num).array();
+		byte[] pktWithNum = combine(numByte, data);
+		return pktWithNum;
+	}
+
+	private byte[] addChecksum(byte[] data) {
+		int checksum = calculateChecksum(data);
+		byte[] checksumByte = ByteBuffer.allocate(4).putInt(checksum).array();
+		byte[] checksumedData = combine(checksumByte, data);
+		return checksumedData;
+
+	}
+
+	private byte[] trimPktData(DatagramPacket pkt) {
+		int actual = pkt.getLength();
+		byte[] a = pkt.getData();
+		byte[] b = new byte[actual];
+		b = Arrays.copyOfRange(a, 0, actual);
+		return b;
+	}
+
+	private int calculateChecksum(byte[] data) {
 		CRC32 crc = new CRC32();
-		crc.update(bytes);
+		crc.update(data);
 		return (int) crc.getValue();
 	}
 
-	public byte[] combineBytes(byte[] arr1, byte[] arr2) {
-		byte[] combined = new byte[arr1.length + arr2.length];
-		System.arraycopy(arr1, 0, combined, 0, arr1.length);
-		System.arraycopy(arr2, 0, combined, arr1.length, arr2.length);
-		return combined;
-	}
-	
-	private DatagramPacket trimPktData(DatagramPacket pkt) {
-		int size = pkt.getLength();
-		byte[] arr1 = pkt.getData();
-		byte[] arr2 = new byte[size];
-		arr2 = Arrays.copyOfRange(arr1, 0, size);
-		pkt.setData(arr2);
-		return pkt;
+	private byte[] combine(byte[] a, byte[] b) {
+		byte[] c = new byte[a.length + b.length];
+		System.arraycopy(a, 0, c, 0, a.length);
+		System.arraycopy(b, 0, c, a.length, b.length);
+		return c;
 	}
 }
