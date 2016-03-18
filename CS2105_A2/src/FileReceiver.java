@@ -22,14 +22,17 @@ class FileReceiver {
 			System.out.println("Usage: java FileReceiver port");
 			System.exit(1);
 		}
-
+		
+		double time1 = System.currentTimeMillis() / 1000.0;
 		FileReceiver fileReceiver = new FileReceiver(args[0]);
 		fileReceiver.process();
+		double time2 = System.currentTimeMillis() / 1000.0;
+		System.out.println("Time taken is: " + (time2 - time1));
 	}
 
 	public FileReceiver(String localPort) {
 		port = Integer.parseInt(localPort);
-		sequence=-1;
+		sequence=0;
 		try {
 			socket = new DatagramSocket(port);
 		} catch (SocketException e) {
@@ -38,102 +41,98 @@ class FileReceiver {
 	}
 
 	public void process() {
-		byte[] buffer = new byte[1000];
-
+		byte[] buffer = new byte[1000];		
 		try {
 			DatagramPacket pkt = new DatagramPacket(buffer, buffer.length);
-			
+
 			socket.receive(pkt);
 			byte[] headerData = rdt(pkt); // data is reliable now
 			String dest = extractDest(headerData);
 			System.out.println(dest);
-			
+			reply(sequence, pkt.getAddress(), pkt.getPort());
+			sequence++;
+
 			BufferedOutputStream bos = new BufferedOutputStream(new FileOutputStream(dest));
-			System.out.println("Receiver starts receiving file data");
 			double sum = 0;
+
 			while (pkt.getLength()!=0) {
 				socket.receive(pkt);
-				if (pkt.getLength()==0) break;
-				
 				byte[] data = rdt(pkt);
 				int current = extractPktNumber(data);
-				if (current!=sequence) {
-					sequence--;
+				if (current<sequence) {
+					// sender sends too fast
+					// somehow previous packet also come
+					reply(sequence-1, pkt.getAddress(), pkt.getPort());
 					continue;
+				}
+				if (current>sequence) {
+					System.out.println("BOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOM");
+					break;
 				}
 				data = Arrays.copyOfRange(data, 8, data.length);
 				bos.write(data, 0, data.length);
 				sum += data.length;
-				System.out.println("---------" + data.length + " bytes received. Sum is " + sum + "--------");
+				System.out.println("---------" + data.length + " bytes received. Sum is " + sum/1000 + "KB ---------");
+				if (data.length<992) break;
+				sequence++;
 			}
+
 			bos.close();
+			socket.close();
 		}
-		catch (Exception e) {
+		catch (IOException e) {
 			e.printStackTrace();
 		}
 	}
 	
+	private void reply(int _sequence, InetAddress client, int port) throws IOException {
+		String reply = "ACK" + _sequence;
+		byte[] replyData = reply.getBytes();
+		DatagramPacket replyPkt = new DatagramPacket(replyData, replyData.length, client, port);
+		socket.send(replyPkt);
+	}
+
 	// this method gurantees the correctness of the packet returned
 	public byte[] rdt(DatagramPacket pkt) {
 		InetAddress client = pkt.getAddress();
 		byte[] data = trimPktData(pkt);
 		String reply = "";
 		int breakCount=0; //DEBUGGING
-		
+
 		try {
 			while (isCorrupted(data)) {
-				System.out.println("Packet" + sequence + " corrupted. :(");
-				System.out.println("Waiting for packet" + sequence + "......");
-				reply = "ACK" + sequence;
+				reply = "ACK" + (sequence-1);
 				byte[] replyData = reply.getBytes();
 				DatagramPacket replyPkt = new DatagramPacket(replyData, replyData.length, client, pkt.getPort());
 				socket.send(replyPkt);
 				socket.receive(pkt);
 				data = trimPktData(pkt);
-				
-				breakCount++; //DEBUGGING
 			}
-			
-			sequence++;
-			System.out.println("Packet" + sequence + " received successfully. :)");
-			reply = "ACK" + sequence;
-			byte[] replyData = reply.getBytes();
-			DatagramPacket replyPkt = new DatagramPacket(replyData, replyData.length, client, pkt.getPort());
-			socket.send(replyPkt);
-			
+
 		} catch (Exception e) {
 			e.printStackTrace();
 		}
 		return data;
 	}
-	
-	private boolean isRepeated(byte[] bytes) {
-		int current = extractPktNumber(bytes);
-		System.out.println("isRepeated/sequence: " +  sequence);
-		if (current == (sequence-1)) return true;
-		else return false;
-	}
-	
+
 	private boolean isCorrupted(byte[] bytes) {
 		int senderChecksum = extractChecksum(bytes);
 		byte[] contents = Arrays.copyOfRange(bytes, 4, bytes.length);
 		int contentChecksum = calculateChecksum(contents);
-		System.out.println("[DEBUG] senderChecksum: " + senderChecksum);
-		System.out.println("[DEBUG] contentChecksum: " + contentChecksum);
 		if (senderChecksum==contentChecksum) return false;
 		else return true;
 	}
-	
+
 	private int extractPktNumber(byte[] bytes) {
 		ByteBuffer wrapper = ByteBuffer.wrap(bytes, 4, 8);
 		return wrapper.getInt();
 	}
-	
+
 	private int extractChecksum(byte[] bytes) {
 		ByteBuffer wrapper = ByteBuffer.wrap(bytes, 0, 4);
 		return wrapper.getInt();
 	}
-	
+
 	private byte[] trimPktData(DatagramPacket pkt) {
 		int actual = pkt.getLength();
 		byte[] a = pkt.getData();
@@ -141,22 +140,21 @@ class FileReceiver {
 		b = Arrays.copyOfRange(a, 0, actual);
 		return b;
 	}
-	
+
 	private int calculateChecksum(byte[] data) {
 		CRC32 crc = new CRC32();
 		crc.update(data);
 		return (int) crc.getValue();
 	}
-	
+
 	private String extractDest(byte[] headerData) {
 		headerData = Arrays.copyOfRange(headerData, 8, headerData.length);
 		String header = new String(headerData, 0, headerData.length);
-		System.out.println("[DEBUG] header: " + header);
 		String dest = extractDestFileName(header);
 		System.out.println("[DEBUG] dest: " + dest);
 		return dest;
 	}
-	
+
 	private String extractDestFileName(String string) {
 		String[] strings = string.split("/");
 		String destFileName = strings[1];

@@ -14,6 +14,7 @@ public class UnreliNET {
     int returnPort_sk1;
     private DatagramSocket sk1, sk2;
     int port_sk1, port_sk2;
+    InetAddress dst_addr;
     
     // corruption/loss rate
     static float data_loss_pct;
@@ -32,7 +33,6 @@ public class UnreliNET {
         public void run() {
             try {
                 byte[] in_data = new byte[buf_size];
-                InetAddress dst_addr = InetAddress.getByName("127.0.0.1");
                 DatagramPacket in_pkt = new DatagramPacket(in_data, in_data.length);
                 
                 while (true) {
@@ -49,7 +49,7 @@ public class UnreliNET {
                     // decide if to drop the packet or not
                     if (rnd.nextFloat() <= data_loss_pct) {
                         dropCounter++;
-                        System.out.println(dropCounter + " Packet dropped");
+                        System.out.println(dropCounter + " packet(s) dropped");
                         continue;
                     }
                     
@@ -59,7 +59,7 @@ public class UnreliNET {
                             if (rnd_byte.nextFloat() <= 0.3)  //decide if to corrupt a byte
                                 in_data[i] = (byte) ((in_data[i] + 1) % 10);
                         corruptionCounter++;
-                        System.out.println(corruptionCounter + " Packet corrupted");
+                        System.out.println(corruptionCounter + " packet(s) corrupted");
                     }
                     
                     // write data to the outgoing socket
@@ -84,8 +84,9 @@ public class UnreliNET {
         
         public void run() {
             try {
+                InetAddress src_dst_addr = InetAddress.getByName("localhost");
+
                 byte[] in_data = new byte[buf_size];
-                InetAddress dst_addr = InetAddress.getByName("127.0.0.1");
                 DatagramPacket in_pkt = new DatagramPacket(in_data, in_data.length);
                 
                 while (true) {
@@ -116,7 +117,7 @@ public class UnreliNET {
                     
                     // write data to the outgoing socket
                     DatagramPacket out_pkt =
-                        new DatagramPacket(in_data, in_pkt.getLength(), dst_addr, returnPort_sk1);
+                        new DatagramPacket(in_data, in_pkt.getLength(), src_dst_addr, returnPort_sk1);
                     sk1.send(out_pkt);
                 }
                 
@@ -128,9 +129,11 @@ public class UnreliNET {
     }
     
     public UnreliNET(float data_corrupt_rate, float ack_corrupt_rate,
-                     float data_loss_rate, float ack_loss_rate, int unreliNetPort, int rcvPort) {
+                     float data_loss_rate, float ack_loss_rate, int unreliNetPort, 
+                     String rcvHost, int rcvPort) {
         
         System.out.println("unreliNetPort = " + unreliNetPort
+                               + "\nrcvHost = " + rcvHost 
                                + "\nrcvPort = " + rcvPort 
                                + "\ndata corruption rate = " + data_corrupt_rate
                                + "\nack/nak corruption rate = " + ack_corrupt_rate
@@ -150,6 +153,7 @@ public class UnreliNET {
             
             port_sk1 = unreliNetPort;
             port_sk2 = rcvPort;
+            dst_addr = InetAddress.getByName(rcvHost);
             
             // create threads to process sender's incoming data
             UnreliThreadProcessData th1 = new UnreliThreadProcessData();
@@ -166,14 +170,14 @@ public class UnreliNET {
     
     public static void main(String[] args) {
         // parse parameters
-        if (args.length != 6) {
+        if (args.length != 7) {
             System.err.println("Usage: java UnreliNET <P_DATA_CORRUPT> <P_ACK_CORRUPT> " +
-                               "<P_DATA_LOSS> <P_ACK_LOSS> <unreliNetPort> <rcvPort>");
+                               "<P_DATA_LOSS> <P_ACK_LOSS> <unreliNetPort> <rcvHostName> <rcvPort>");
             System.exit(-1);
         } else {
             new UnreliNET(Float.parseFloat(args[0]), Float.parseFloat(args[1]),
                           Float.parseFloat(args[2]), Float.parseFloat(args[3]),
-                          Integer.parseInt(args[4]), Integer.parseInt(args[5]) );
+                          Integer.parseInt(args[4]), args[5], Integer.parseInt(args[6]) );
         }
     }
 }
